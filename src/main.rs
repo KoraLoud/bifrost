@@ -1,26 +1,96 @@
 //bifrost - Kora Loudermilk 2025
 
-use bifrost::http_parse_error::HttpParseError;
+use bifrost::thread_pool::ThreadPool;
+use bifrost::{DirectoryReadError, http_parse_error::HttpParseError};
 use core::error;
 use http::{Method, Request, Uri, Version};
 use std::{
-    io::{BufReader, Read},
+    collections::HashMap,
+    env, fs,
+    io::{self, BufReader, Read},
     net::{TcpListener, TcpStream},
-    thread,
+    sync::Arc,
 };
 
 const LF: u8 = 0x0a;
 const CR: u8 = 0x0d;
 
 fn main() {
+    let argv: Vec<String> = env::args().collect();
+    if argv.len() != 2 {
+        //not correct amount of arguments
+        println!("One path argument is required to build the route table.");
+        println!("Usage: bifrost <directory>");
+        return;
+    }
+    //check if provided path is valid
+    let routing_table = Arc::new(build_route_table(&argv[1]).unwrap()); //hashmap of uri paths and their corresponding html
+    //file localtion. routes will be created at the beginning of the program to provide security
+    //against path traversal exploits
     let listener = TcpListener::bind("192.168.1.81:80").unwrap();
+    let threadpool = ThreadPool::new(4);
+    println!("listening");
     for stream in listener.incoming() {
         let stream = stream.unwrap();
-        thread::spawn(|| match handle_connection(stream) {
-            Err(error) => println!("error in thread: {}", error),
-            _ => (),
-        });
+        let rt = Arc::clone(&routing_table);
+        let request_handler = || handle_connection(stream, rt).unwrap();
+        threadpool.execute(request_handler);
     }
+}
+
+fn build_route_table(
+    dir_string: &String,
+) -> Result<HashMap<String, String>, bifrost::DirectoryReadError> {
+    let root_dir = fs::read_dir(dir_string).expect("Problem reading directory");
+    let mut route_map = HashMap::new();
+    recursive_add_route(root_dir, &mut route_map, dir_string)?;
+    println!("{:#?}", route_map);
+    Ok(route_map)
+}
+
+fn recursive_add_route(
+    dir: fs::ReadDir,
+    map: &mut HashMap<String, String>,
+    root_dir: &String,
+) -> Result<(), DirectoryReadError> {
+    for entry in dir.into_iter().flatten() {
+        println!(
+            "indexing file {:?}",
+            entry.file_name().into_string().unwrap()
+        );
+        if entry.file_type()?.is_file() {
+            let (route_string, path_string) = file_to_route(&entry, root_dir);
+            if map.contains_key(&route_string) {
+                return Err(DirectoryReadError {
+                    msg: String::from(
+                        "Route already exists. Do you have two html files in the same directory?",
+                    ),
+                });
+            }
+            map.insert(route_string, path_string);
+        } else if entry.file_type()?.is_dir() {
+            recursive_add_route(fs::read_dir(entry.path()).unwrap(), map, root_dir)?;
+        }
+    }
+    Ok(())
+}
+
+fn file_to_route(entry: &fs::DirEntry, root_dir: &String) -> (String, String) {
+    let mut route_string: String = String::new();
+    let mut path_string: String = String::new();
+    if let Some(entry_ext) = entry.path().extension() {
+        path_string.push_str(entry.path().canonicalize().unwrap().to_str().unwrap());
+        route_string = String::from(entry.path().to_str().unwrap()).replace(root_dir, "");
+        if entry_ext == "html" {
+            //route is directory name
+            route_string = String::from(entry.path().parent().unwrap().to_str().unwrap())
+                .replace(root_dir, "");
+            if route_string.is_empty() {
+                route_string = String::from("/");
+            }
+        }
+    }
+    (route_string, path_string)
 }
 
 fn invalid_request_handler(steam: TcpStream) {
@@ -66,7 +136,7 @@ fn parse_http_packet(http_packet: Vec<String>) -> Result<Request<()>, HttpParseE
     Ok(request.body(())?)
 }
 
-fn read_stream(mut reader: BufReader<&TcpStream>) -> Result<Vec<String>, Box<dyn error::Error>> {
+fn read_stream(mut reader: BufReader<&TcpStream>) -> Result<Vec<String>, io::Error> {
     let mut packet: Vec<String> = Vec::new();
     let mut line_buff: Vec<u8> = Vec::new();
     loop {
@@ -89,20 +159,26 @@ fn read_stream(mut reader: BufReader<&TcpStream>) -> Result<Vec<String>, Box<dyn
     Ok(packet)
 }
 
-fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn error::Error>> {
+fn handle_connection(
+    stream: TcpStream,
+    routing_table: Arc<HashMap<String, String>>,
+) -> Result<(), Box<dyn error::Error>> {
     println!("got connection!");
     println!("{:#?}", stream.peer_addr().unwrap());
     let reader = BufReader::new(&stream);
     //let read_timeout = Duration::from_millis(1000);
     //stream.set_read_timeout(Some(read_timeout))?;
     let http_request_string = read_stream(reader)?;
-    println!("got stuff: {:?}", http_request_string);
+    //println!("got stuff: {:?}", http_request_string);
     //println!("{:?}", http_request);
-    let http_request = parse_http_packet(http_request_string);
-    if http_request.is_err() {
-        println!("invlid request");
+    if let Ok(req) = parse_http_packet(http_request_string) {
+        if routing_table.contains_key(&req.uri().path().to_string()) {
+            println!("WOAH i have  tht  file!");
+        } else {
+            println!("ermmm i dont have that one");
+        }
     } else {
-        println!("{:#?}", http_request.unwrap());
+        println!("http parse error");
     }
     Ok(())
 }
