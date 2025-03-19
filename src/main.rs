@@ -1,9 +1,11 @@
 //bifrost - Kora Loudermilk 2025
 
+use bifrost::http_resource::HttpResource;
 use bifrost::thread_pool::ThreadPool;
 use bifrost::{DirectoryReadError, http_parse_error::HttpParseError};
 use core::error;
-use http::{Method, Request, Uri, Version};
+use http::{Method, Request, Response, Uri, Version};
+use std::io::Write;
 use std::{
     collections::HashMap,
     env, fs,
@@ -40,17 +42,16 @@ fn main() {
 
 fn build_route_table(
     dir_string: &String,
-) -> Result<HashMap<String, String>, bifrost::DirectoryReadError> {
+) -> Result<HashMap<String, HttpResource>, bifrost::DirectoryReadError> {
     let root_dir = fs::read_dir(dir_string).expect("Problem reading directory");
     let mut route_map = HashMap::new();
     recursive_add_route(root_dir, &mut route_map, dir_string)?;
-    println!("{:#?}", route_map);
     Ok(route_map)
 }
 
 fn recursive_add_route(
     dir: fs::ReadDir,
-    map: &mut HashMap<String, String>,
+    map: &mut HashMap<String, HttpResource>,
     root_dir: &String,
 ) -> Result<(), DirectoryReadError> {
     for entry in dir.into_iter().flatten() {
@@ -59,7 +60,7 @@ fn recursive_add_route(
             entry.file_name().into_string().unwrap()
         );
         if entry.file_type()?.is_file() {
-            let (route_string, path_string) = file_to_route(&entry, root_dir);
+            let (route_string, path_resource) = file_to_route(&entry, root_dir)?;
             if map.contains_key(&route_string) {
                 return Err(DirectoryReadError {
                     msg: String::from(
@@ -67,7 +68,7 @@ fn recursive_add_route(
                     ),
                 });
             }
-            map.insert(route_string, path_string);
+            map.insert(route_string, path_resource);
         } else if entry.file_type()?.is_dir() {
             recursive_add_route(fs::read_dir(entry.path()).unwrap(), map, root_dir)?;
         }
@@ -75,11 +76,15 @@ fn recursive_add_route(
     Ok(())
 }
 
-fn file_to_route(entry: &fs::DirEntry, root_dir: &String) -> (String, String) {
-    let mut route_string: String = String::new();
-    let mut path_string: String = String::new();
+fn file_to_route(
+    entry: &fs::DirEntry,
+    root_dir: &String,
+) -> Result<(String, HttpResource), DirectoryReadError> {
+    let mut route_string = String::new();
+    let mut route_http_resource: Option<HttpResource> = None;
     if let Some(entry_ext) = entry.path().extension() {
-        path_string.push_str(entry.path().canonicalize().unwrap().to_str().unwrap());
+        let path_resource = entry.path().canonicalize().unwrap();
+        route_http_resource = Some(HttpResource::new(path_resource.to_str().unwrap()));
         route_string = String::from(entry.path().to_str().unwrap()).replace(root_dir, "");
         if entry_ext == "html" {
             //route is directory name
@@ -90,7 +95,12 @@ fn file_to_route(entry: &fs::DirEntry, root_dir: &String) -> (String, String) {
             }
         }
     }
-    (route_string, path_string)
+    if (route_http_resource.is_none()) {
+        return Err(DirectoryReadError {
+            msg: String::from("Failure to read file"),
+        });
+    }
+    Ok((route_string, route_http_resource.unwrap()))
 }
 
 fn invalid_request_handler(steam: TcpStream) {
@@ -161,20 +171,25 @@ fn read_stream(mut reader: BufReader<&TcpStream>) -> Result<Vec<String>, io::Err
 
 fn handle_connection(
     stream: TcpStream,
-    routing_table: Arc<HashMap<String, String>>,
+    routing_table: Arc<HashMap<String, HttpResource>>,
 ) -> Result<(), Box<dyn error::Error>> {
     println!("got connection!");
     println!("{:#?}", stream.peer_addr().unwrap());
     let reader = BufReader::new(&stream);
-    //let read_timeout = Duration::from_millis(1000);
-    //stream.set_read_timeout(Some(read_timeout))?;
+    //read tcp stream into Strings
     let http_request_string = read_stream(reader)?;
-    //println!("got stuff: {:?}", http_request_string);
-    //println!("{:?}", http_request);
+    //parse packet into request struct
     if let Ok(req) = parse_http_packet(http_request_string) {
-        if routing_table.contains_key(&req.uri().path().to_string()) {
-            println!("WOAH i have  tht  file!");
+        let uri_path = &req.uri().path().to_string();
+        if routing_table.contains_key(uri_path) {
+            send_res(stream, &routing_table[uri_path]);
+            //requested resource exists
+            /*let response = Response::builder()
+            .status(200)
+            .body(routing_table[uri_path].file_data.as_bytes())
+            .unwrap();*/
         } else {
+            //requested resource does not exist
             println!("ermmm i dont have that one");
         }
     } else {
@@ -182,3 +197,5 @@ fn handle_connection(
     }
     Ok(())
 }
+
+fn send_res(mut stream: TcpStream, file: &HttpResource) {}

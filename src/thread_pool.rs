@@ -4,6 +4,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::Receiver;
 use std::thread;
 
+//threadpool object spawns a set amount of threads and has them read out a mpsc queue
 pub struct ThreadPool {
     workers: Vec<Worker>,
     sender: mpsc::Sender<Job>,
@@ -41,7 +42,8 @@ impl Worker {
     pub fn new(thread_num: usize, reciever: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
         let thread = thread::spawn(move || {
             loop {
-                let job = reciever.lock().unwrap().recv().unwrap();
+                let job = reciever.lock().unwrap().recv().unwrap(); //get mutex and attempt to read
+                //queue
                 job();
                 println!("request brought to you by: thread {thread_num}");
             }
