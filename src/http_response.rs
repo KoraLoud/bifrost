@@ -13,7 +13,7 @@ impl HttpResponse {
         HttpResponse {
             status_code: String::new(),
             headers: HashMap::new(),
-            body: String::new(),
+            body: Vec::new(),
         }
     }
     pub fn add_header(&mut self, key: &str, value: &str) {
@@ -27,7 +27,7 @@ impl HttpResponse {
         temp += code.canonical_reason().unwrap_or("");
         self.status_code = temp;
     }
-    pub fn to_bytes() -> &[u8] {
+    /*pub fn to_bytes() -> &[u8] {
         let mut tostring = String::new();
         tostring += self.status_code.as_str();
         tostring += "\r\n";
@@ -38,7 +38,7 @@ impl HttpResponse {
             tostring += "\r\n";
         }
         tostring += "\r\n";
-    }
+    } */
 }
 
 impl Default for HttpResponse {
@@ -59,7 +59,7 @@ impl Display for HttpResponse {
             tostring += "\r\n";
         }
         tostring += "\r\n";
-        tostring += self.body.as_str();
+        //tostring += self.body;
         write!(f, "{}", tostring)
     }
 }
