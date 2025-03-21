@@ -5,7 +5,7 @@ use http::StatusCode;
 pub struct HttpResponse {
     pub status_code: String,
     pub headers: HashMap<String, String>,
-    pub body: String,
+    pub body: Vec<u8>,
 }
 
 impl HttpResponse {
@@ -26,6 +26,24 @@ impl HttpResponse {
         temp += " ";
         temp += code.canonical_reason().unwrap_or("");
         self.status_code = temp;
+    }
+    pub fn to_bytes() -> &[u8] {
+        let mut tostring = String::new();
+        tostring += self.status_code.as_str();
+        tostring += "\r\n";
+        for (header, value) in &self.headers {
+            tostring += header.as_str();
+            tostring += ": ";
+            tostring += value.as_str();
+            tostring += "\r\n";
+        }
+        tostring += "\r\n";
+    }
+}
+
+impl Default for HttpResponse {
+    fn default() -> HttpResponse {
+        HttpResponse::new()
     }
 }
 

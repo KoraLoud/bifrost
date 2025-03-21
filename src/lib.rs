@@ -2,6 +2,7 @@ use std::{fmt, io};
 pub mod http_parse_error;
 pub mod http_resource;
 pub mod http_response;
+//pub mod mimetype_table;
 pub mod thread_pool;
 
 #[derive(Debug, Clone)]

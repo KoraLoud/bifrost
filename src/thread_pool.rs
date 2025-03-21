@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
-use std::sync::mpsc::Receiver;
 use std::thread;
 
 //threadpool object spawns a set amount of threads and has them read out a mpsc queue

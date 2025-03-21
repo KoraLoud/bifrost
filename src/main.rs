@@ -1,11 +1,11 @@
 //bifrost - Kora Loudermilk 2025
 
 use bifrost::http_resource::HttpResource;
-use bifrost::http_response::{self, HttpResponse};
+use bifrost::http_response::HttpResponse;
 use bifrost::thread_pool::ThreadPool;
 use bifrost::{DirectoryReadError, http_parse_error::HttpParseError};
 use core::error;
-use http::{Method, Request, Response, StatusCode, Uri, Version};
+use http::{Method, Request, StatusCode, Uri, Version};
 use std::io::Write;
 use std::{
     collections::HashMap,
@@ -15,7 +15,7 @@ use std::{
     sync::Arc,
 };
 
-static MIMETYPES: &'static str = include_str!("mimetypes.txt");
+static MIMETYPES: &str = include_str!("mimetypes.txt");
 
 const LF: u8 = 0x0a;
 const CR: u8 = 0x0d;
@@ -28,11 +28,13 @@ fn main() {
         println!("Usage: bifrost <directory>");
         return;
     }
+    //build mimetype table. this allows us to look up a files extension to find the corresponding
+    //MIME type
     let mimetype_table = Arc::new(build_mimetype_table(MIMETYPES));
-    //check if provided path is valid
-    let routing_table = Arc::new(build_route_table(&argv[1]).unwrap()); //hashmap of uri paths and their corresponding html
+    //hashmap of uri paths and their corresponding html
     //file localtion. routes will be created at the beginning of the program to provide security
     //against path traversal exploits
+    let routing_table = Arc::new(build_route_table(&argv[1]).unwrap());
     let listener = TcpListener::bind("192.168.1.81:80").unwrap();
     let threadpool = ThreadPool::new(4);
     println!("listening");
@@ -115,16 +117,12 @@ fn file_to_route(
             }
         }
     }
-    if (route_http_resource.is_none()) {
+    if route_http_resource.is_none() {
         return Err(DirectoryReadError {
             msg: String::from("Failure to read file"),
         });
     }
     Ok((route_string, route_http_resource.unwrap()))
-}
-
-fn invalid_request_handler(steam: TcpStream) {
-    //send error html page
 }
 
 fn parse_http_packet(http_packet: Vec<String>) -> Result<Request<()>, HttpParseError> {
@@ -183,8 +181,6 @@ fn read_stream(mut reader: BufReader<&TcpStream>) -> Result<Vec<String>, io::Err
             packet.push(String::from_utf8_lossy(&line_buff[0..line_buff.len() - 2]).to_string());
             line_buff.clear();
         }
-
-        //println!("{:?}", line_buff);
     }
     Ok(packet)
 }
@@ -204,29 +200,14 @@ fn handle_connection(
         let uri_path = &req.uri().path().to_string();
         if routing_table.contains_key(uri_path) {
             //requested resource exists
-            /*let response = Response::builder()
-            .status(200)
-            .body(routing_table[uri_path].file_data.as_bytes())
-            .unwrap();*/
-            let mut res = HttpResponse::new();
-            res.set_status(StatusCode::OK);
-            res.add_header(
-                "Content-Type",
-                extension_to_content_type(
-                    routing_table[uri_path].file_ext.as_str(),
-                    &mimetype_table,
-                )
-                .as_str(),
+            let resource = &routing_table[uri_path];
+            let res = build_res(
+                resource,
+                get_mime_type(&resource.file_ext, &mimetype_table),
+                StatusCode::OK,
             );
-            res.body = routing_table[uri_path].file_data.clone();
-            res.add_header(
-                "Content-Length",
-                routing_table[uri_path].file_data.len().to_string().as_str(),
-            );
-            let res_string = res.to_string();
-            let res_bytes = res_string.as_bytes();
-            let test_string = "HTTP/1.0 200 OK\r\nDate: Fri, 31 Dec 1999 23:59:59 GMT\r\nContent-Type: text/html\r\nContent-Length: 1354\r\n\r\n<html>\r\n<body>";
-            stream.write_all(res_bytes).unwrap();
+            let res = res.as_slice();
+            stream.write_all(res).unwrap();
         } else {
             //requested resource does not exist
             println!("cant find resource");
@@ -237,6 +218,21 @@ fn handle_connection(
     Ok(())
 }
 
-fn extension_to_content_type(extension: &str, mimetable: &HashMap<&str, &str>) -> String {
+fn get_mime_type(extension: &str, mimetable: &HashMap<&str, &str>) -> String {
     String::from(mimetable[extension])
+}
+
+//move this to http_response and construct it there. returns &[u8]
+fn build_res(http_resource: &HttpResource, mimetype: String, status_code: StatusCode) -> Vec<u8> {
+    let mut res = HttpResponse::new();
+    res.set_status(status_code);
+    res.add_header("Content-Type", mimetype.as_str());
+    res.add_header(
+        "Content-Length",
+        http_resource.file_data.len().to_string().as_str(),
+    );
+    let head = res.to_string();
+    let body = http_resource.file_data.iter();
+    let data = head.as_bytes().iter().chain(body).copied().collect();
+    data
 }
