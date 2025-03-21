@@ -34,7 +34,7 @@ fn main() {
     //hashmap of uri paths and their corresponding html
     //file localtion. routes will be created at the beginning of the program to provide security
     //against path traversal exploits
-    let routing_table = Arc::new(build_route_table(&argv[1]).unwrap());
+    let routing_table = Arc::new(build_route_table(&argv[1], &mimetype_table).unwrap());
     let listener = TcpListener::bind("192.168.1.81:80").unwrap();
     let threadpool = ThreadPool::new(4);
     println!("listening");
@@ -42,7 +42,7 @@ fn main() {
         let stream = stream.unwrap();
         let rt = Arc::clone(&routing_table);
         let mt = Arc::clone(&mimetype_table);
-        let request_handler = || handle_connection(stream, rt, mt).unwrap();
+        let request_handler = || handle_connection(stream, rt).unwrap();
         threadpool.execute(request_handler);
     }
 }
@@ -61,10 +61,11 @@ fn build_mimetype_table(mimetype_str: &str) -> HashMap<&str, &str> {
 
 fn build_route_table(
     dir_string: &String,
+    mimetype_table: &Arc<HashMap<&str, &str>>,
 ) -> Result<HashMap<String, HttpResource>, bifrost::DirectoryReadError> {
     let root_dir = fs::read_dir(dir_string).expect("Problem reading directory");
     let mut route_map = HashMap::new();
-    recursive_add_route(root_dir, &mut route_map, dir_string)?;
+    recursive_add_route(root_dir, &mut route_map, dir_string, mimetype_table)?;
     Ok(route_map)
 }
 
@@ -72,6 +73,7 @@ fn recursive_add_route(
     dir: fs::ReadDir,
     map: &mut HashMap<String, HttpResource>,
     root_dir: &String,
+    mimetype_table: &Arc<HashMap<&str, &str>>,
 ) -> Result<(), DirectoryReadError> {
     for entry in dir.into_iter().flatten() {
         println!(
@@ -79,7 +81,7 @@ fn recursive_add_route(
             entry.file_name().into_string().unwrap()
         );
         if entry.file_type()?.is_file() {
-            let (route_string, path_resource) = file_to_route(&entry, root_dir)?;
+            let (route_string, path_resource) = file_to_route(&entry, root_dir, mimetype_table)?;
             if map.contains_key(&route_string) {
                 return Err(DirectoryReadError {
                     msg: String::from(
@@ -89,7 +91,12 @@ fn recursive_add_route(
             }
             map.insert(route_string, path_resource);
         } else if entry.file_type()?.is_dir() {
-            recursive_add_route(fs::read_dir(entry.path()).unwrap(), map, root_dir)?;
+            recursive_add_route(
+                fs::read_dir(entry.path()).unwrap(),
+                map,
+                root_dir,
+                mimetype_table,
+            )?;
         }
     }
     Ok(())
@@ -98,6 +105,7 @@ fn recursive_add_route(
 fn file_to_route(
     entry: &fs::DirEntry,
     root_dir: &String,
+    mimetype_table: &Arc<HashMap<&str, &str>>,
 ) -> Result<(String, HttpResource), DirectoryReadError> {
     let mut route_string = String::new();
     let mut route_http_resource: Option<HttpResource> = None;
@@ -106,6 +114,7 @@ fn file_to_route(
         route_http_resource = Some(HttpResource::new(
             path_resource.to_str().unwrap(),
             entry_ext.to_str().unwrap(),
+            mimetype_table[entry_ext.to_str().unwrap()],
         ));
         route_string = String::from(entry.path().to_str().unwrap()).replace(root_dir, "");
         if entry_ext == "html" {
@@ -188,7 +197,6 @@ fn read_stream(mut reader: BufReader<&TcpStream>) -> Result<Vec<String>, io::Err
 fn handle_connection(
     mut stream: TcpStream,
     routing_table: Arc<HashMap<String, HttpResource>>,
-    mimetype_table: Arc<HashMap<&str, &str>>,
 ) -> Result<(), Box<dyn error::Error>> {
     println!("got connection!");
     println!("{:#?}", stream.peer_addr().unwrap());
@@ -201,38 +209,26 @@ fn handle_connection(
         if routing_table.contains_key(uri_path) {
             //requested resource exists
             let resource = &routing_table[uri_path];
-            let res = build_res(
-                resource,
-                get_mime_type(&resource.file_ext, &mimetype_table),
-                StatusCode::OK,
-            );
-            let res = res.as_slice();
-            stream.write_all(res).unwrap();
+            let res = HttpResponse::from_resource(resource);
+            stream.write_all(res.to_bytes().as_slice()).unwrap();
         } else {
             //requested resource does not exist
-            println!("cant find resource");
+            if routing_table.contains_key("/404") {
+                let resource = &routing_table["/404"];
+                let mut res = HttpResponse::from_resource(resource);
+                res.set_status(StatusCode::NOT_FOUND);
+                stream.write_all(res.to_bytes().as_slice()).unwrap();
+            } else {
+                println!("Resource not found and 404 page doesn't exist!");
+                let mut res = HttpResponse::new();
+                res.set_status(StatusCode::NOT_FOUND);
+                res.add_header("Content-Type", "text/html");
+                res.body = String::from("404 NOT FOUND").bytes().collect();
+                stream.write_all(res.to_bytes().as_slice()).unwrap();
+            }
         }
     } else {
         println!("http parse error");
     }
     Ok(())
-}
-
-fn get_mime_type(extension: &str, mimetable: &HashMap<&str, &str>) -> String {
-    String::from(mimetable[extension])
-}
-
-//move this to http_response and construct it there. returns &[u8]
-fn build_res(http_resource: &HttpResource, mimetype: String, status_code: StatusCode) -> Vec<u8> {
-    let mut res = HttpResponse::new();
-    res.set_status(status_code);
-    res.add_header("Content-Type", mimetype.as_str());
-    res.add_header(
-        "Content-Length",
-        http_resource.file_data.len().to_string().as_str(),
-    );
-    let head = res.to_string();
-    let body = http_resource.file_data.iter();
-    let data = head.as_bytes().iter().chain(body).copied().collect();
-    data
 }
