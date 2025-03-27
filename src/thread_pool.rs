@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
@@ -25,7 +26,7 @@ impl ThreadPool {
     }
     pub fn execute<T>(&self, job: T)
     where
-        T: FnOnce() + Send + 'static,
+        T: FnOnce() -> Result<(), Box<dyn Error>> + Send + 'static,
     {
         let job = Box::new(job);
         self.sender.send(job).unwrap();
@@ -51,4 +52,4 @@ impl Worker {
     }
 }
 
-pub type Job = Box<dyn FnOnce() + Send + 'static>;
+pub type Job = Box<dyn FnOnce() -> Result<(), Box<dyn Error>> + Send + 'static>;

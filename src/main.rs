@@ -42,7 +42,7 @@ fn main() {
         let stream = stream.unwrap();
         let rt = Arc::clone(&routing_table);
         let mt = Arc::clone(&mimetype_table);
-        let request_handler = || handle_connection(stream, rt).unwrap();
+        let request_handler = || handle_connection(stream, rt);
         threadpool.execute(request_handler);
     }
 }
@@ -209,22 +209,26 @@ fn handle_connection(
         if routing_table.contains_key(uri_path) {
             //requested resource exists
             let resource = &routing_table[uri_path];
+            if let Some(query) = req.uri().query() {
+                println!("{:?}", query);
+            }
+            println!("scheme: {:?}", req.uri().scheme());
             let res = HttpResponse::from_resource(resource);
-            stream.write_all(res.to_bytes().as_slice()).unwrap();
+            stream.write_all(res.to_bytes().as_slice())?;
         } else {
             //requested resource does not exist
             if routing_table.contains_key("/404") {
                 let resource = &routing_table["/404"];
                 let mut res = HttpResponse::from_resource(resource);
                 res.set_status(StatusCode::NOT_FOUND);
-                stream.write_all(res.to_bytes().as_slice()).unwrap();
+                stream.write_all(res.to_bytes().as_slice())?;
             } else {
                 println!("Resource not found and 404 page doesn't exist!");
                 let mut res = HttpResponse::new();
                 res.set_status(StatusCode::NOT_FOUND);
                 res.add_header("Content-Type", "text/html");
                 res.body = String::from("404 NOT FOUND").bytes().collect();
-                stream.write_all(res.to_bytes().as_slice()).unwrap();
+                stream.write_all(res.to_bytes().as_slice())?;
             }
         }
     } else {
