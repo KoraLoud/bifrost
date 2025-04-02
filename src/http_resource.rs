@@ -2,6 +2,8 @@ use std::fs;
 use std::fs::Metadata;
 use std::io::Read;
 use std::path::Path;
+
+#[derive(Clone)]
 pub struct HttpResource {
     pub mime_type: String,
     pub file_ext: String,

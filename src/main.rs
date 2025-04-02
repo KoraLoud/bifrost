@@ -85,9 +85,15 @@ fn recursive_add_route(
             if map.contains_key(&route_string) {
                 return Err(DirectoryReadError {
                     msg: String::from(
-                        "Route already exists. Do you have two html files in the same directory?",
+                        "Route already exists. Do you have two index.html files in the same directory?",
                     ),
                 });
+            }
+            if entry.file_name() == "index.html" {
+                println!("creating second route for index.html file");
+                let index_route = route_string.clone() + "index.html";
+                println!("route: {:?}", index_route.clone());
+                map.insert(index_route, path_resource.clone());
             }
             map.insert(route_string, path_resource);
         } else if entry.file_type()?.is_dir() {
@@ -117,7 +123,7 @@ fn file_to_route(
             mimetype_table[entry_ext.to_str().unwrap()],
         ));
         route_string = String::from(entry.path().to_str().unwrap()).replace(root_dir, "");
-        if entry_ext == "html" {
+        if entry.file_name() == "index.html" {
             //route is directory name for html files
             route_string = String::from(entry.path().parent().unwrap().to_str().unwrap())
                 .replace(root_dir, "");
